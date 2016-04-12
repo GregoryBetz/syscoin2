@@ -23,7 +23,7 @@
 #if defined(HAVE_CONFIG_H)
 #include "config/syscoin-config.h" /* for USE_QRCODE */
 #endif
-
+#include <QDebug>
 #ifdef USE_QRCODE
 #include <qrencode.h>
 #endif
@@ -46,7 +46,7 @@ OfferAcceptDialogBTC::OfferAcceptDialogBTC(const PlatformStyle *platformStyle, Q
 	string strCurrencyCode = currencyCode.toStdString();
 	ui->escrowDisclaimer->setText(tr("<font color='blue'>Please note escrow is not available since you are paying in BTC, only SYS payments can be escrowed. </font>"));
 	ui->bitcoinInstructionLabel->setText(tr("After paying for this item, please enter the Bitcoin Transaction ID and click on the confirm button below. You may use the QR Code to the left to scan the payment request into your wallet or click on the Open BTC Wallet if you are on the desktop and have Bitcoin Core installed."));
-	ui->acceptMessage->setText(tr("Are you sure you want to purchase %1 of '%2' from merchant: '%3'? To complete your purchase please pay %4 BTC using your Bitcoin wallet.").arg(quantity).arg(title).arg(sellerAlias).arg(fprice));
+	ui->acceptMessage->setText(tr("Are you sure you want to purchase %1 of '%2' from merchant: '%3'? To complete your purchase please pay %4 BTC to %5 using your Bitcoin wallet.").arg(quantity).arg(title).arg(sellerAlias).arg(fprice).arg(address));
 	string strPrice = strprintf("%f", dblPrice);
 	price = QString::fromStdString(strPrice);
 
@@ -115,10 +115,10 @@ void OfferAcceptDialogBTC::acceptPayment()
 {
 	acceptOffer();
 }
-bool OfferAcceptDialogBTC::CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price, int& height, long& time)
+bool OfferAcceptDialogBTC::CheckUnconfirmedPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price)
 {
 	QNetworkAccessManager *nam = new QNetworkAccessManager(this);
-	QUrl url("https://blockchain.info/tx/" + strBTCTxId + "?format=json");
+	QUrl url("https://blockchain.info/unconfirmed-transactions?format=json");
 	QNetworkRequest request(url);
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 	QNetworkReply* reply = nam->get(request);
@@ -137,10 +137,100 @@ bool OfferAcceptDialogBTC::CheckPaymentInBTC(const QString &strBTCTxId, const QS
 			return false;
 	}
 	bool doubleSpend = false;
+	
 	if(reply->error() == QNetworkReply::NoError) {
 
 		UniValue outerValue;
-		bool read = outerValue.read(reply->readAll().toStdString());
+		bool read = outerValue.read(reply->readAll().trimmed());
+		if (read)
+		{
+			UniValue outerObj = outerValue.get_obj();
+			UniValue txsValue = find_value(outerObj, "txs");
+			if (txsValue.isArray())
+			{
+				UniValue txs = txsValue.get_array();
+				for (unsigned int txidx = 0; txidx < txs.size(); txidx++) {
+					const UniValue& tx = txs[txidx];	
+					UniValue hashValue = find_value(tx, "hash");
+					if (hashValue.isStr())
+					{
+						if(strBTCTxId.toStdString() !=  hashValue.get_str())
+							continue;
+					}
+					else
+						continue;
+					UniValue doubleSpendValue = find_value(tx, "double_spend");
+					if (doubleSpendValue.isBool())
+					{
+						doubleSpend = doubleSpendValue.get_bool();
+						if(doubleSpend)
+							return false;
+					}
+					UniValue outputsValue = find_value(tx, "out");
+					if (outputsValue.isArray())
+					{
+						UniValue outputs = outputsValue.get_array();
+						for (unsigned int idx = 0; idx < outputs.size(); idx++) {
+							const UniValue& output = outputs[idx];	
+							UniValue addressValue = find_value(output, "addr");
+							if(addressValue.isStr())
+							{
+								if(addressValue.get_str() == address.toStdString())
+								{
+									UniValue paymentValue = find_value(output, "value");
+									if(paymentValue.isNum())
+									{
+										valueAmount += paymentValue.get_int64();
+										if(valueAmount >= priceAmount)
+											return true;
+									}
+								}
+									
+							}
+						}
+					}
+				}
+			}	
+		}
+	}
+	reply->deleteLater();
+	return false;
+
+
+}
+bool OfferAcceptDialogBTC::CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price, int& height, long& time)
+{
+	qDebug() << "CheckPaymentInBTC https://blockchain.info/tx/" + strBTCTxId + "?format=json";
+	QNetworkAccessManager *nam = new QNetworkAccessManager(this);
+	QUrl url("https://blockchain.info/tx/" + strBTCTxId + "?format=json");
+	//QSslSocket::setProtocol(QSsl::SslV3) 
+	QSslConfiguration SslConfiguration(QSslConfiguration::defaultConfiguration());
+	
+	SslConfiguration.setProtocol(QSsl::SslV3);
+	QNetworkRequest request(url);
+	request.setSslConfiguration(SslConfiguration);
+	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+	QNetworkReply* reply = nam->get(request);
+	reply->ignoreSslErrors();
+	CAmount valueAmount = 0;
+	CAmount priceAmount = 0;
+	if(!ParseMoney(price.toStdString(), priceAmount))
+		return false;
+	qDebug() << "ParseMoney";
+	int totalTime = 0;
+	while(!reply->isFinished())
+	{
+		qApp->processEvents();
+		totalTime += 100;
+		MilliSleep(100);
+		if(totalTime > 30000)
+			return false;
+	}
+	bool doubleSpend = false;
+	qDebug() << "reply error " + reply->errorString();
+		UniValue outerValue;
+		bool read = outerValue.read(reply->readAll().trimmed());
+		qDebug() << "read";
 		if (read)
 		{
 			UniValue outerObj = outerValue.get_obj();
@@ -153,35 +243,47 @@ bool OfferAcceptDialogBTC::CheckPaymentInBTC(const QString &strBTCTxId, const QS
 			UniValue doubleSpendValue = find_value(outerObj, "double_spend");
 			if (doubleSpendValue.isBool())
 			{
+				qDebug() << "double spend";
 				doubleSpend = doubleSpendValue.get_bool();
 				if(doubleSpend)
 					return false;
 			}
 			UniValue outputsValue = find_value(outerObj, "out");
+			qDebug() << "outputs";
 			if (outputsValue.isArray())
 			{
 				UniValue outputs = outputsValue.get_array();
 				for (unsigned int idx = 0; idx < outputs.size(); idx++) {
+					qDebug() << "out";
 					const UniValue& output = outputs[idx];	
 					UniValue addressValue = find_value(output, "addr");
 					if(addressValue.isStr())
 					{
+						qDebug() << "address: " + QString::fromStdString(addressValue.get_str()) +  " vs " << address;
 						if(addressValue.get_str() == address.toStdString())
 						{
 							UniValue paymentValue = find_value(output, "value");
+							qDebug() << "value check";
 							if(paymentValue.isNum())
 							{
+								
 								valueAmount += paymentValue.get_int64();
+								qDebug() << "valueAmount " + QString::number(valueAmount) + " vs  priceAmount " + QString::number(priceAmount);
 								if(valueAmount >= priceAmount)
+								{
+									qDebug() << "found";
 									return true;
+								}
 							}
 						}
 							
 					}
 				}
 			}
+		
 		}
-	}
+		else
+			qDebug() << reply->readAll();
 	reply->deleteLater();
 	return false;
 
@@ -247,15 +349,17 @@ void OfferAcceptDialogBTC::acceptOffer()
                 QMessageBox::Ok, QMessageBox::Ok);
             return;
 		}
+
 		int height;
 		long time;
-		if(!CheckPaymentInBTC(ui->btctxidEdit->text().trimmed(), address, price, height, time))
+		if(!CheckPaymentInBTC(ui->btctxidEdit->text().trimmed(), address, price, height, time) && !CheckUnconfirmedPaymentInBTC(ui->btctxidEdit->text().trimmed(), address, price))
 		{
 			QMessageBox::critical(this, windowTitle(),
-				tr("Could not find a payment of %1 BTC at address %2, please check the Transaction ID %3 has been confirmed by the Bitcoin blockchain: ").arg(price).arg(address).arg(ui->btctxidEdit->text().trimmed()),
+				tr("Could not find a payment of %1 BTC at address %2, please check the Transaction ID %3 was not found in the Bitcoin blockchain: ").arg(price).arg(address).arg(ui->btctxidEdit->text().trimmed()),
 				QMessageBox::Ok, QMessageBox::Ok);
 			return;
 		}
+		
 
 		UniValue params(UniValue::VARR);
 		UniValue valError;

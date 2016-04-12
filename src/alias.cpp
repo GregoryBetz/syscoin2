@@ -258,14 +258,12 @@ string getCurrencyToSYSFromAlias(const vector<unsigned char> &vchAliasPeg, const
 	string currencyCodeToFind = stringFromVch(vchCurrency);
 	// check for alias existence in DB
 	vector<CAliasIndex> vtxPos;
-
 	if (!paliasdb->ReadAlias(vchAliasPeg, vtxPos) || vtxPos.empty())
 	{
 		if(fDebug)
 			LogPrintf("getCurrencyToSYSFromAlias() Could not find %s alias\n", stringFromVch(vchAliasPeg).c_str());
 		return "1";
 	}
-	
 	
 	if (vtxPos.size() < 1)
 	{
@@ -308,7 +306,7 @@ string getCurrencyToSYSFromAlias(const vector<unsigned char> &vchAliasPeg, const
 					string currencyCode = currencyNameValue.get_str();
 					rateList.push_back(currencyCode);
 					if(currencyCodeToFind == currencyCode)
-					{
+					{		
 						UniValue precisionValue = find_value(codeObj, "precision");
 						if(precisionValue.isNum())
 						{
@@ -319,30 +317,23 @@ string getCurrencyToSYSFromAlias(const vector<unsigned char> &vchAliasPeg, const
 							found = true;
 							try{
 							
-								nFee = AmountFromValue(currencyAmountValue.get_real());
+								float val = currencyAmountValue.get_real();
+								nFee = AmountFromValue(strprintf("%.8f", val));
 							}
 							catch(std::runtime_error& err)
 							{
 								try
 								{
-								
 									nFee = currencyAmountValue.get_int()*COIN;
 								}
 								catch(std::runtime_error& err)
 								{
-								
 									if(fDebug)
-										printf("getCurrencyToSYSFromAlias() Failed to get currency amount from value\n");
+										LogPrintf("getCurrencyToSYSFromAlias() Failed to get currency amount from value\n");
 									return "1";
 								}
 							}
-							catch(...)
-							{
-								double val = currencyAmountValue.get_real();
-								double roundPrecision = 100000000;
-								double roundedVal = round(val * roundPrecision)/roundPrecision;
-								nFee = AmountFromValue(roundedVal);
-							}
+							
 						}
 					}
 				}
@@ -353,7 +344,7 @@ string getCurrencyToSYSFromAlias(const vector<unsigned char> &vchAliasPeg, const
 	else
 	{
 		if(fDebug)
-			printf("getCurrencyToSYSFromAlias() Failed to get value from alias\n");
+			LogPrintf("getCurrencyToSYSFromAlias() Failed to get value from alias\n");
 		return "1";
 	}
 	if(!found)
