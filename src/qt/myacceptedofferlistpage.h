@@ -2,6 +2,8 @@
 #define MYACCEPTEDOFFERLISTPAGE_H
 
 #include <QDialog>
+#include <QSslError>
+#include "amount.h"
 class PlatformStyle;
 namespace Ui {
     class MyAcceptedOfferListPage;
@@ -16,6 +18,7 @@ class QItemSelection;
 class QSortFilterProxyModel;
 class QMenu;
 class QModelIndex;
+class QNetworkReply;
 QT_END_NAMESPACE
 
 /** Widget that shows a list of owned certes.
@@ -35,7 +38,7 @@ public:
     const QString &getReturnValue() const { return returnValue; }
 	void showEvent ( QShowEvent * event );
 	bool lookup(const QString &lookupid, const QString &acceptid, QString& address, QString& price, QString& btcTxId);
-	bool CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price, int& height, long& time);
+	void CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price);
 public Q_SLOTS:
     void done(int retval);
 
@@ -51,9 +54,12 @@ private:
     QMenu *contextMenu;
     QAction *deleteAction; // to be able to explicitly disable it
     QString newOfferToSelect;
-
+	QString m_strBTCTxId;
+	QString m_strAddress;
+	CAmount m_priceAmount;
 private Q_SLOTS:
-
+	void onIgnoreSSLErrors(QNetworkReply *reply, QList<QSslError> error);
+	void slotConfirmedFinished(QNetworkReply *);
     void on_copyOffer_clicked();
     void onCopyOfferValueAction();
     /** Export button clicked */

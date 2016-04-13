@@ -144,77 +144,119 @@ bool MyAcceptedOfferListPage::lookup(const QString &lookupid, const QString &acc
 
 
 }
-bool MyAcceptedOfferListPage::CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price, int& height, long& time)
-{
-	QNetworkAccessManager *nam = new QNetworkAccessManager(this);
-	QUrl url("https://blockchain.info/tx/" + strBTCTxId + "?format=json");
-	QNetworkRequest request(url);
-	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-	QNetworkReply* reply = nam->get(request);
-	reply->ignoreSslErrors();
-	CAmount valueAmount = 0;
-	CAmount priceAmount = 0;
-	if(!ParseMoney(price.toStdString(), priceAmount))
-		return false;
-	int totalTime = 0;
-	while(!reply->isFinished())
-	{
-		qApp->processEvents();
-		totalTime += 100;
-		MilliSleep(100);
-		if(totalTime > 30000)
-			return false;
+void MyAcceptedOfferListPage::onIgnoreSSLErrors(QNetworkReply *reply, QList<QSslError> error)  
+{  
+   reply->ignoreSslErrors(error);  
+}  
+void MyAcceptedOfferListPage::slotConfirmedFinished(QNetworkReply * reply){
+	if(reply->error() != QNetworkReply::NoError) {
+        QMessageBox::critical(this, windowTitle(),
+            tr("Error making request: ") + reply->errorString(),
+                QMessageBox::Ok, QMessageBox::Ok);
+		return;
 	}
+	CAmount valueAmount = 0;
 	bool doubleSpend = false;
-	if(reply->error() == QNetworkReply::NoError) {
-
-		UniValue outerValue;
-		bool read = outerValue.read(reply->readAll().trimmed());
-		if (read)
+	qDebug() << "Reply: ";
+	qDebug() << QVariant(reply->error()).toString();
+	long time;
+	int height;
+		
+	QByteArray bytes = reply->readAll();
+	QString str = QString::fromUtf8(bytes.data(), bytes.size());
+	int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+	qDebug() << "Status Code: ";
+	qDebug() << QVariant(statusCode).toString();
+	UniValue outerValue;
+	bool read = outerValue.read(str.toStdString());
+	if (read)
+	{
+		qDebug() << "Read";
+		UniValue outerObj = outerValue.get_obj();
+		UniValue heightValue = find_value(outerObj, "block_height");
+		if (heightValue.isNum())
+			height = heightValue.get_int();
+		UniValue timeValue = find_value(outerObj, "time");
+		if (timeValue.isNum())
+			time = timeValue.get_int64();
+		UniValue doubleSpendValue = find_value(outerObj, "double_spend");
+		if (doubleSpendValue.isBool())
 		{
-			UniValue outerObj = outerValue.get_obj();
-			UniValue heightValue = find_value(outerObj, "block_height");
-			if (heightValue.isNum())
-				height = heightValue.get_int();
-			UniValue timeValue = find_value(outerObj, "time");
-			if (timeValue.isNum())
-				time = timeValue.get_int64();
-			UniValue doubleSpendValue = find_value(outerObj, "double_spend");
-			if (doubleSpendValue.isBool())
+			doubleSpend = doubleSpendValue.get_bool();
+			if(doubleSpend)
 			{
-				doubleSpend = doubleSpendValue.get_bool();
-				if(doubleSpend)
-					return false;
+				QMessageBox::critical(this, windowTitle(),
+					tr("Payment cannot be completed. Outputs seem to be double spent!"),
+						QMessageBox::Ok, QMessageBox::Ok);
+				return;
 			}
-			UniValue outputsValue = find_value(outerObj, "out");
-			if (outputsValue.isArray())
-			{
-				UniValue outputs = outputsValue.get_array();
-				for (unsigned int idx = 0; idx < outputs.size(); idx++) {
-					const UniValue& output = outputs[idx];	
-					UniValue addressValue = find_value(output, "addr");
-					if(addressValue.isStr())
+		}
+		UniValue outputsValue = find_value(outerObj, "out");
+		if (outputsValue.isArray())
+		{
+			qDebug() << "Outputs";
+			UniValue outputs = outputsValue.get_array();
+			for (unsigned int idx = 0; idx < outputs.size(); idx++) {
+				const UniValue& output = outputs[idx];	
+				UniValue addressValue = find_value(output, "addr");
+				if(addressValue.isStr())
+				{
+					if(addressValue.get_str() == m_strAddress.toStdString())
 					{
-						if(addressValue.get_str() == address.toStdString())
+						qDebug() << "Address match";
+						UniValue paymentValue = find_value(output, "value");
+						if(paymentValue.isNum())
 						{
-							UniValue paymentValue = find_value(output, "value");
-							if(paymentValue.isNum())
+							valueAmount += paymentValue.get_int64();
+							qDebug() << "Check value";
+							if(valueAmount >= m_priceAmount)
 							{
-								valueAmount += paymentValue.get_int64();
-								if(valueAmount >= priceAmount)
-									return true;
+								qDebug() << "Found";
+								QDateTime timestamp;
+								timestamp.setTime_t(time);
+								QMessageBox::information(this, windowTitle(),
+									tr("Transaction ID %1 was found in the Bitcoin blockchain! Full payment has been detected in block %2 at %3. It is recommended that you confirm payment by opening your Bitcoin wallet and seeing the funds in your account.").arg(m_strBTCTxId).arg(height).arg(timestamp.toString(Qt::SystemLocaleShortDate)),
+									QMessageBox::Ok, QMessageBox::Ok);
+								return;
 							}
 						}
-							
 					}
+						
 				}
 			}
 		}
 	}
+	else
+	{
+		QMessageBox::critical(this, windowTitle(),
+			tr("Cannot parse JSON response: ") + str,
+				QMessageBox::Ok, QMessageBox::Ok);
+		return;
+	}
+	
 	reply->deleteLater();
-	return false;
-
-
+	QMessageBox::warning(this, windowTitle(),
+		tr("Payment not found in the Bitcoin blockchain! Please try again later."),
+			QMessageBox::Ok, QMessageBox::Ok);	
+}
+void MyAcceptedOfferListPage::CheckPaymentInBTC(const QString &strBTCTxId, const QString& address, const QString& price)
+{
+	m_priceAmount = 0;
+	if(!ParseMoney(price.toStdString(), m_priceAmount))
+	{
+        QMessageBox::critical(this, windowTitle(),
+            tr("Error parsing price: ") + price,
+                QMessageBox::Ok, QMessageBox::Ok);
+		return;
+	}
+	m_strBTCTxId = strBTCTxId;
+	m_strAddress = address;
+	QNetworkAccessManager *nam = new QNetworkAccessManager(this);
+	connect(nam,SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),this,SLOT(onIgnoreSSLErrors(QNetworkReply*,QList<QSslError>)));  
+	connect(nam, SIGNAL(finished(QNetworkReply *)), this, SLOT(slotUnconfirmedFinished(QNetworkReply *)));
+	QUrl url("https://blockchain.info/tx/" + strBTCTxId + "?format=json");
+	QNetworkRequest request(url);
+	nam->get(request);
 }
 void MyAcceptedOfferListPage::on_btcButton_clicked()
 {
@@ -245,20 +287,9 @@ void MyAcceptedOfferListPage::on_btcButton_clicked()
             QMessageBox::Ok, QMessageBox::Ok);
         return;
 	}
-	int height;
-	long time;
-	if(!CheckPaymentInBTC(btcTxId, address, price, height, time))
-	{
-        QMessageBox::critical(this, windowTitle(),
-			tr("Could not find a payment of %1 BTC at address %2, please check the Transaction ID %3 has been confirmed by the Bitcoin blockchain: ").arg(price).arg(address).arg(btcTxId),
-            QMessageBox::Ok, QMessageBox::Ok);
-        return;
-	}
-	QDateTime timestamp;
-	timestamp.setTime_t(time);
-    QMessageBox::information(this, windowTitle(),
-		tr("Transaction ID %1 was found in the Bitcoin blockchain! Full payment has been detected in block %2 at %3. It is recommended that you confirm payment by opening your Bitcoin wallet and seeing the funds in your account.").arg(btcTxId).arg(height).arg(timestamp.toString(Qt::SystemLocaleShortDate)),
-        QMessageBox::Ok, QMessageBox::Ok);
+
+	CheckPaymentInBTC(btcTxId, address, price);
+
 
 }
 void MyAcceptedOfferListPage::on_messageButton_clicked()
