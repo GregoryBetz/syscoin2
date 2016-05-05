@@ -2,7 +2,6 @@
 #define OFFERACCEPTDIALOGBTC_H
 #include "walletmodel.h"
 #include <QDialog>
-#include <QSslError>
 #include <QImage>
 #include <QLabel>
 #include "amount.h"
@@ -20,9 +19,7 @@ class OfferAcceptDialogBTC : public QDialog
 public:
     explicit OfferAcceptDialogBTC(const PlatformStyle *platformStyle, QString alias, QString offer, QString quantity, QString notes, QString title, QString currencyCode, QString strPrice, QString sellerAlias, QString address, QWidget *parent=0);
     ~OfferAcceptDialogBTC();
-	void CheckPaymentInBTC(const QString &strBTCTxId, const QString& price);
-	void CheckUnconfirmedPaymentInBTC(const QString &strBTCTxId, const CAmount& price);
-	bool lookup(const QString &lookupid, QString& price);
+	void CheckPaymentInBTC();
     bool getPaymentStatus();
 
 private:
@@ -34,12 +31,13 @@ private:
 	QString price;
 	QString title;
 	QString offer;
+	QString acceptGuid;
 	QString sellerAlias;
 	QString address;
 	QString alias;
-	QString m_strBTCTxId;
+	QString m_buttonText;
+	double dblPrice;
 	bool offerPaid; 
-	CAmount m_priceAmount;
 	
 
 private Q_SLOTS:
@@ -47,8 +45,6 @@ private Q_SLOTS:
     void tryAcceptOffer();
 	void acceptOffer();
 	void openBTCWallet();
-	void onIgnoreSSLErrors(QNetworkReply *reply, QList<QSslError> error);  
-	void slotUnconfirmedFinished(QNetworkReply *);
 	void slotConfirmedFinished(QNetworkReply *);
 	
 };

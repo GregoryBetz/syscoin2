@@ -803,12 +803,16 @@ bool CheckOfferInputs(const CTransaction &tx, int op, int nOut, const vector<vec
 				int precision = 2;
 				// lookup the price of the offer in syscoin based on pegged alias at the block # when accept/escrow was made
 				CAmount nPrice = convertCurrencyCodeToSyscoin(myPriceOffer.vchAliasPeg, myPriceOffer.sCurrencyCode, priceAtTimeOfAccept, heightToCheckAgainst, precision)*theOfferAccept.nQty;
-				if(tx.vout[nOut].nValue != nPrice)
+				if((tx.vout[nOut].nValue - nPrice) > COIN)
 				{
-					nPrice = convertCurrencyCodeToSyscoin(myPriceOffer.vchAliasPeg, myPriceOffer.sCurrencyCode, priceAtTimeOfAccept, heightToCheckAgainst-1, precision)*theOfferAccept.nQty;
-					if(tx.vout[nOut].nValue != nPrice)
+					nPrice = convertCurrencyCodeToSyscoin(myPriceOffer.vchAliasPeg, myPriceOffer.sCurrencyCode, priceAtTimeOfAccept, heightToCheckAgainst+1, precision)*theOfferAccept.nQty;
+					if((tx.vout[nOut].nValue - nPrice) > COIN)
 					{
-						return error("CheckOfferInputs() OP_OFFER_ACCEPT: this offer accept does not pay enough according to the offer price %ld, currency %s, value found %ld\n", nPrice, stringFromVch(theOffer.sCurrencyCode).c_str(), tx.vout[nOut].nValue);	
+						nPrice = convertCurrencyCodeToSyscoin(myPriceOffer.vchAliasPeg, myPriceOffer.sCurrencyCode, priceAtTimeOfAccept, heightToCheckAgainst-1, precision)*theOfferAccept.nQty;
+						if((tx.vout[nOut].nValue - nPrice) > COIN)
+						{
+							return error("CheckOfferInputs() OP_OFFER_ACCEPT: this offer accept does not pay enough according to the offer price %ld, currency %s, value found %ld, height %d\n", nPrice, stringFromVch(theOffer.sCurrencyCode).c_str(), tx.vout[nOut].nValue, heightToCheckAgainst-1);	
+						}
 					}
 				}												
 			}						
@@ -1314,8 +1318,6 @@ UniValue offernew_nocheck(const UniValue& params, bool fHelp) {
 	if(params.size() >= 8) {
 		vchCert = vchFromValue(params[7]);
 		CTransaction txCert;
-		if(nQty <= 0)
-			throw runtime_error("qty must be greator than 0 for a cert offer");		
 		// make sure this cert is still valid
 		if (GetTxOfCert( vchCert, theCert, txCert)) {
 			CPubKey currentCertKey(theCert.vchPubKey);
@@ -2045,7 +2047,7 @@ UniValue offerwhitelist(const UniValue& params, bool fHelp) {
 }
 
 UniValue offerupdate(const UniValue& params, bool fHelp) {
-	if (fHelp || params.size() < 5 || params.size() > 10)
+	if (fHelp || params.size() < 5 || params.size() > 11)
 		throw runtime_error(
 		"offerupdate <aliaspeg> <alias> <guid> <category> <title> <quantity> <price> [description] [private=0] [cert. guid] [exclusive resell=1]\n"
 						"Perform an update on an offer you control.\n"
@@ -2534,7 +2536,7 @@ bool CreateLinkedOfferAcceptRecipients(vector<CRecipient> &vecSend, const CAmoun
 
 UniValue offeraccept(const UniValue& params, bool fHelp) {
 	if (fHelp || 1 > params.size() || params.size() > 7)
-		throw runtime_error("offeraccept <alias> <guid> [quantity] [message] [BTC TxId] [linkedacceptguidtxhash] [escrowTxHash]\n"
+		throw runtime_error("offeraccept <acceptGuid> <alias> <guid> [quantity] [message] [BTC TxId] [linkedacceptguidtxhash] [escrowTxHash]\n"
 				"Accept&Pay for a confirmed offer.\n"
 				"<alias> An alias of the buyer.\n"
 				"<guid> guidkey from offer.\n"
@@ -2822,6 +2824,8 @@ UniValue offeraccept(const UniValue& params, bool fHelp) {
 	{
 		uint256 txBTCId(uint256S(stringFromVch(vchBTCTxId)));
 		txAccept.txBTCId = txBTCId;
+		CreateRecipient(scriptPubKey, paymentRecipient);
+		vecSend.push_back(paymentRecipient);
 	}
 	else if(!theOffer.bOnlyAcceptBTC)
 	{
@@ -3147,6 +3151,9 @@ UniValue offeraccept_nocheck(const UniValue& params, bool fHelp) {
 	{
 		uint256 txBTCId(uint256S(stringFromVch(vchBTCTxId)));
 		txAccept.txBTCId = txBTCId;
+		CreateRecipient(scriptPubKey, paymentRecipient);
+		vecSend.push_back(paymentRecipient);
+
 	}
 	else if(!theOffer.bOnlyAcceptBTC)
 	{
@@ -3317,7 +3324,7 @@ UniValue offerinfo(const UniValue& params, bool fHelp) {
 		oOfferAccept.push_back(Pair("ismine", IsSyscoinTxMine(txA, "offer") ? "true" : "false"));
 
 		if(!ca.txBTCId.IsNull())
-			oOfferAccept.push_back(Pair("paid","check payment"));
+			oOfferAccept.push_back(Pair("paid","true(BTC)"));
 		else
 			oOfferAccept.push_back(Pair("paid","true"));
 		string strMessage = string("");
@@ -3536,7 +3543,7 @@ UniValue offeracceptlist(const UniValue& params, bool fHelp) {
 				oOfferAccept.push_back(Pair("ismine", IsSyscoinTxMine(acceptTx, "offer")? "true" : "false"));
 
 				if(!theOfferAccept.txBTCId.IsNull())
-					oOfferAccept.push_back(Pair("status","check payment"));
+					oOfferAccept.push_back(Pair("status","paid(BTC)"));
 				else
 					oOfferAccept.push_back(Pair("status","paid"));
 
@@ -3679,7 +3686,7 @@ UniValue offeracceptlist(const UniValue& params, bool fHelp) {
 			// this accept is for me(something ive sold) if this offer is mine
 			oOfferAccept.push_back(Pair("ismine", IsSyscoinTxMine(acceptTx, "offer")? "true" : "false"));
 			if(!theOfferAccept.txBTCId.IsNull())
-				oOfferAccept.push_back(Pair("status","check payment"));
+				oOfferAccept.push_back(Pair("status","paid(BTC)"));
 			else
 				oOfferAccept.push_back(Pair("status","paid"));
 

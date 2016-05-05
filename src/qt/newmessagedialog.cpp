@@ -12,7 +12,7 @@
 using namespace std;
 
 extern const CRPCTable tableRPC;
-NewMessageDialog::NewMessageDialog(Mode mode, const QString &to, QWidget *parent) :
+NewMessageDialog::NewMessageDialog(Mode mode, const QString &to, const QString &title, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::NewMessageDialog), mapper(0), mode(mode), model(0), walletModel(0)
 {
@@ -22,6 +22,10 @@ NewMessageDialog::NewMessageDialog(Mode mode, const QString &to, QWidget *parent
 	{
 		ui->toEdit->setEnabled(false);
 		ui->toEdit->setText(to);
+	}
+	if(title != QString(""))
+	{
+		ui->topicEdit->setText(title);
 	}
     switch(mode)
     {
@@ -99,13 +103,13 @@ void NewMessageDialog::loadAliases()
 	{
 		string strError = find_value(objError, "message").get_str();
 		QMessageBox::critical(this, windowTitle(),
-			tr("Could not refresh cert list: %1").arg(QString::fromStdString(strError)),
+			tr("Could not refresh alias list: %1").arg(QString::fromStdString(strError)),
 				QMessageBox::Ok, QMessageBox::Ok);
 	}
 	catch(std::exception& e)
 	{
 		QMessageBox::critical(this, windowTitle(),
-			tr("There was an exception trying to refresh the cert list: ") + QString::fromStdString(e.what()),
+			tr("There was an exception trying to refresh the alias list: ") + QString::fromStdString(e.what()),
 				QMessageBox::Ok, QMessageBox::Ok);
 	}         
  

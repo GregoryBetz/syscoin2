@@ -2,7 +2,6 @@
 #define MYACCEPTEDOFFERLISTPAGE_H
 
 #include <QDialog>
-#include <QSslError>
 #include "amount.h"
 class PlatformStyle;
 namespace Ui {
@@ -54,11 +53,11 @@ private:
     QMenu *contextMenu;
     QAction *deleteAction; // to be able to explicitly disable it
     QString newOfferToSelect;
+	QString m_buttonText;
 	QString m_strBTCTxId;
 	QString m_strAddress;
-	CAmount m_priceAmount;
+	double dblPrice;
 private Q_SLOTS:
-	void onIgnoreSSLErrors(QNetworkReply *reply, QList<QSslError> error);
 	void slotConfirmedFinished(QNetworkReply *);
     void on_copyOffer_clicked();
     void onCopyOfferValueAction();

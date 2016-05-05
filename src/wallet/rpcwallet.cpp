@@ -136,9 +136,50 @@ UniValue getnewaddress(const UniValue& params, bool fHelp)
 
     pwalletMain->SetAddressBook(keyID, strAccount, "receive");
 
+	// SYSCOIN to send v1 address by default
+    return CSyscoinAddress(keyID, true).ToString();
+}
+// SYSCOIN
+UniValue getv2address(const UniValue& params, bool fHelp)
+{
+    if (!EnsureWalletIsAvailable(fHelp))
+        return NullUniValue;
+    
+    if (fHelp || params.size() > 1)
+        throw runtime_error(
+            "getv2address ( \"account\" )\n"
+			"\nReturns a new Syscoin (starts with 1) address for receiving payments.\n"
+            "If 'account' is specified (DEPRECATED), it is added to the address book \n"
+            "so payments received with the address will be credited to 'account'.\n"
+            "\nArguments:\n"
+            "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
+            "\nResult:\n"
+            "\"syscoinaddress\"    (string) The new syscoin address\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getnewaddress", "")
+            + HelpExampleRpc("getnewaddress", "")
+        );
+
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    // Parse the account first so we don't generate a key if there's an error
+    string strAccount;
+    if (params.size() > 0)
+        strAccount = AccountFromValue(params[0]);
+
+    if (!pwalletMain->IsLocked())
+        pwalletMain->TopUpKeyPool();
+
+    // Generate a new key that is added to wallet
+    CPubKey newKey;
+    if (!pwalletMain->GetKeyFromPool(newKey))
+        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+    CKeyID keyID = newKey.GetID();
+
+    pwalletMain->SetAddressBook(keyID, strAccount, "receive");
+
     return CSyscoinAddress(keyID).ToString();
 }
-
 
 CSyscoinAddress GetAccountAddress(string strAccount, bool bForceNew=false)
 {
@@ -1243,10 +1284,15 @@ UniValue ListReceived(const UniValue& params, bool fByAccounts)
         }
         else
         {
+			// SYSCOIN v1 addy by default
+			CTxDestination dest = address.Get();
+			CSyscoinAddress v1addr;
+			v1addr.Set(dest, true);
             UniValue obj(UniValue::VOBJ);
             if(fIsWatchonly)
                 obj.push_back(Pair("involvesWatchonly", true));
-            obj.push_back(Pair("address",       address.ToString()));
+            obj.push_back(Pair("address",       v1addr.ToString()));
+			obj.push_back(Pair("v2address",       address.ToString()));
             obj.push_back(Pair("account",       strAccount));
             obj.push_back(Pair("amount",        ValueFromAmount(nAmount)));
             obj.push_back(Pair("confirmations", (nConf == std::numeric_limits<int>::max() ? 0 : nConf)));
@@ -1361,9 +1407,12 @@ UniValue listreceivedbyaccount(const UniValue& params, bool fHelp)
 
 static void MaybePushAddress(UniValue & entry, const CTxDestination &dest)
 {
+	// SYSCOIN address is v1 address by default for backward compatibility, v2 address is new scheme
     CSyscoinAddress addr;
-    if (addr.Set(dest))
+    if (addr.Set(dest, true))
         entry.push_back(Pair("address", addr.ToString()));
+    if (addr.Set(dest))
+        entry.push_back(Pair("v2address", addr.ToString()));
 }
 
 void ListTransactions(const CWalletTx& wtx, const string& strAccount, int nMinDepth, bool fLong, UniValue& ret, const isminefilter& filter)
@@ -2420,7 +2469,11 @@ UniValue listunspent(const UniValue& params, bool fHelp)
         entry.push_back(Pair("vout", out.i));
         CTxDestination address;
         if (ExtractDestination(out.tx->vout[out.i].scriptPubKey, address)) {
-            entry.push_back(Pair("address", CSyscoinAddress(address).ToString()));
+			// SYSCOIN v1 addy by default
+			CSyscoinAddress v1addr;
+			v1addr.Set(address, true);
+            entry.push_back(Pair("address", v1addr.ToString()));
+			entry.push_back(Pair("v2address", CSyscoinAddress(address).ToString()));
             if (pwalletMain->mapAddressBook.count(address))
                 entry.push_back(Pair("account", pwalletMain->mapAddressBook[address].name));
         }

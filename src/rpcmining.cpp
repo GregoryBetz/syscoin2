@@ -799,7 +799,9 @@ UniValue estimatesmartpriority(const UniValue& params, bool fHelp)
     return result;
 }
 
- // SYSCOIN: Merge mining
+/* ************************************************************************** */
+// SYSCOIN Merge mining.  
+
 UniValue getauxblock(const UniValue& params, bool fHelp)
 {
     if (fHelp || (params.size() != 0 && params.size() != 2))
@@ -820,7 +822,7 @@ UniValue getauxblock(const UniValue& params, bool fHelp)
             "  \"coinbasevalue\"      (numeric) value of the block's coinbase\n"
             "  \"bits\"               (string) compressed target of the block\n"
             "  \"height\"             (numeric) height of the block\n"
-            "  \"_target\"            (string) target in reversed byte order, deprecated\n"
+            "  \"target\"            (string) target in reversed byte order, deprecated\n"
             "}\n"
             "\nResult (with arguments):\n"
             "xxxxx        (boolean) whether the submitted block was correct\n"
@@ -848,7 +850,7 @@ UniValue getauxblock(const UniValue& params, bool fHelp)
     if (IsInitialBlockDownload() && !Params().MineBlocksOnDemand())
         throw JSONRPCError(RPC_CLIENT_IN_INITIAL_DOWNLOAD,
                            "Syscoin is downloading blocks...");
-    
+
     /* The variables below are used to keep track of created and not yet
        submitted auxpow blocks.  Lock them to be sure even for multiple
        RPC threads running in parallel.  */
@@ -918,13 +920,13 @@ UniValue getauxblock(const UniValue& params, bool fHelp)
         result.push_back(Pair("coinbasevalue", (int64_t)block.vtx[0].vout[0].nValue));
         result.push_back(Pair("bits", strprintf("%08x", block.nBits)));
         result.push_back(Pair("height", static_cast<int64_t> (pindexPrev->nHeight + 1)));
-        result.push_back(Pair("_target", HexStr(BEGIN(target), END(target))));
+        result.push_back(Pair("target", HexStr(BEGIN(target), END(target))));
 
         return result;
     }
 
     /* Submit a block instead.  Note that this need not lock cs_main,
-       since ProcessBlockFound below locks it instead.  */
+       since ProcessNewBlock below locks it instead.  */
 
     assert(params.size() == 2);
     uint256 hash;
@@ -942,9 +944,39 @@ UniValue getauxblock(const UniValue& params, bool fHelp)
     block.SetAuxpow(new CAuxPow(pow));
     assert(block.GetHash() == hash);
 
-    const bool ok = ProcessBlockFound(&block, Params());
-    if (ok)
-        coinbaseScript->KeepScript();
+    // This is a straight cut & paste job from submitblock()
+    bool fBlockPresent = false;
+    {
+        LOCK(cs_main);
+        BlockMap::iterator mi = mapBlockIndex.find(hash);
+        if (mi != mapBlockIndex.end()) {
+            CBlockIndex *pindex = mi->second;
+            if (pindex->IsValid(BLOCK_VALID_SCRIPTS))
+                return "duplicate";
+            if (pindex->nStatus & BLOCK_FAILED_MASK)
+                return "duplicate-invalid";
+            // Otherwise, we might only have the header - process the block before returning
+            fBlockPresent = true;
+        }
+    }
 
-    return ok;
+    CValidationState state;
+    submitblock_StateCatcher sc(block.GetHash());
+    RegisterValidationInterface(&sc);
+    bool fAccepted = ProcessNewBlock(state, Params(), NULL, &block, true, NULL);
+    UnregisterValidationInterface(&sc);
+    if (fBlockPresent)
+    {
+        if (fAccepted && !sc.found)
+            return "duplicate-inconclusive";
+        return "duplicate";
+    }
+    if (fAccepted)
+    {
+        if (!sc.found)
+            return "inconclusive";
+        coinbaseScript->KeepScript();
+    }
+    return fAccepted;
 }
+
